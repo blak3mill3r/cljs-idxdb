@@ -12,8 +12,6 @@
   :plugins [[lein-cljsbuild "1.0.3"]]
 
   :profiles {:dev {:repl-options {:init-ns cljs-idxdb.core}
-                   :plugins [[lein-ring "0.8.5"]
-                             [com.cemerick/austin "0.1.3"]]
                    :cljsbuild {:builds
                                [{:main { ;; CLJS source code path
                                         :source-paths ["src/cljs/cljs_idxdb"]
