@@ -2,8 +2,10 @@
   (:require-macros [cljs.core.async.macros :refer [go]])
   (:require [cljs.core.async :refer [put! chan <!]]))
 
+(enable-console-print!)
+
 (defn pprint [o]
-  (println (JSON/stringify o nil 2)))
+  (println (js/JSON.stringify o nil 2)))
 
 (defn log [v & text]
   (let [vs (if (string? v)
@@ -15,7 +17,7 @@
 (defn get-target-result [e]
   (-> e .-target .-result))
 
-(defn error-callback [e]
+(defn fail-msg-fn [e]
   (log "error occurred")
   (log e))
 
@@ -33,21 +35,23 @@
 (defn create-index [store name field opts]
   (.. store (createIndex name field (clj->js opts))))
 
-(defn create-db [name version upgrade-fn success-fn]
+(defn create-db [name version upgrade-fn success-fn & {error-fn :error-fn}]
   (let [request (.open js/indexedDB name version)]
     (set! (.-onsuccess request) (comp success-fn get-target-result))
     (set! (.-onupgradeneeded request) (comp upgrade-fn get-target-result))
-    (set! (.-onerror request) error-callback)))
+    (set! (.-onerror request) (or error-fn fail-msg-fn))))
 
-(defn add-item [db store-name item success-fn]
+(defn add-item [db store-name item success-fn & {error-fn :error-fn}]
   (when db
     (let [item (clj->js item)
           tx (. db (transaction (clj->js [store-name]) "readwrite"))
           store (. tx (objectStore store-name))
           request (. store (put item))]
-      (set! (.-onsuccess request) success-fn))))
+      (set! (.-onsuccess request) success-fn)
+      (set! (.-onerror request)   (or error-fn fail-msg-fn)))))
 
 (defn make-rec-acc-fn [acc request success-fn]
+  (println "What am I?" acc request)
   (fn [e]
     (if-let [cursor (get-target-result e)]
       (do
@@ -75,7 +79,7 @@
        (.lowerBound js/IDBKeyRange bound open?)
        (.upperBound js/IDBKeyRange bound open?)))
   ([lower upper open-lower? open-upper?]
-     (.bound js/IDBKeyRange lower uppoer open-lower? open-upper?)))
+     (.bound js/IDBKeyRange lower upper open-lower? open-upper?)))
 
 (defn open-cursor [store-or-index range]
   (.openCursor store-or-index range))
@@ -93,17 +97,19 @@
              request (open-cursor store range)]
          (set! (.-onsuccess request) (make-rec-acc-fn [] request success-fn))))))
 
-(defn get-by-key [db store-name key success-fn]
+(defn get-by-key [db store-name key success-fn & {error-fn :error-fn}]
   (when db
     (let [store (get-tx-store db store-name)
           request (. store (get key))]
-      (set! (.-onsuccess request) (fn [e] (success-fn (js->clj (get-target-result e) :keywordize-keys true)))))))
+      (set! (.-onsuccess request) (fn [e] (success-fn (js->clj (get-target-result e) :keywordize-keys true))))
+      (set! (.-onerror request)   (or error-fn fail-msg-fn)))))
 
 (defn get-by-index
-  ([db store-name index-name initial-key success-fn]
+  ([db store-name index-name initial-key success-fn & {error-fn :error-fn}]
      (when db
        (let [store (get-tx-store db store-name)
              index (get-index store index-name)
              range (make-range true initial-key false)
              request (open-cursor index range)]
-         (set! (.-onsuccess request) (make-rec-acc-fn [] request success-fn))))))
+         (set! (.-onsuccess request) (make-rec-acc-fn [] request success-fn))
+         (set! (.-onerror   request) (or error-fn fail-msg-fn))))))
